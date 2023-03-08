@@ -1,0 +1,13 @@
+Decide if bools are prefixed with `is` or not
+- `validation.*.is_valid` but `precert` and `parsed.redacted` are not
+
+`redacted`
+
+`serial_number` should this be a string?
+
+Add a list of all extension IDs as a string. Four options:
+1. `parsed.extensions_ids` (adjacent to existing fields)
+2. `parsed.extensions.{ids, known, unknown}` (move existing fields)
+3. `parsed.extensions.ids` (probably confusing because of the existence of `unknown_extensions`)
+4. Get rid of unknown extensions, and have `parsed.extensions.ids`. If someone really needs to parse an unknown extension, they can look at the ASN.1 in raw in BQ. I doubt anyone uses the web interface for this.
+
