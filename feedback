@@ -11,3 +11,11 @@ Add a list of all extension IDs as a string. Four options:
 3. `parsed.extensions.ids` (probably confusing because of the existence of `unknown_extensions`)
 4. Get rid of unknown extensions, and have `parsed.extensions.ids`. If someone really needs to parse an unknown extension, they can look at the ASN.1 in raw in BQ. I doubt anyone uses the web interface for this.
 
+`validation.{}.ever_valid` is identical to `validation.{}.had_trusted_path`
+- can't convince myself of a difference in the description
+- empirically verified it's true for NSS and Chrome
+- I recommend dropping `had_trusted_path`
+
+Fingerprints are bytes in BigQuery, is this the case in ES?
+- Confusing that they don't match, but also I understand why
+- TODO: show how to go from hex to bytes in bigquery
