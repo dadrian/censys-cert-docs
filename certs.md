@@ -159,9 +159,9 @@ Censys identifies the set of all candidate intermediate certificates across its
 entire dataset, and attempts to build _all_ paths for every certificate through
 the set of intermediates, and ending at a root in the root store. It does this
 for all root stores it validates against. The validation does not implement name
-constraints, or any platform-specific constraints that may be included in
-validator implementations maintained by operators of various roots stores (e.g.
-[CCV][ccv]).
+constraints, or any platform-specific validation rules, such as certificate
+transparency policies, that may be included in validator implementations
+maintained by operators of various roots stores (e.g. [CCV][ccv]).
 
 * type
 
@@ -224,17 +224,60 @@ CA/Browser Forum (CABF) is in the process of requiring all CAs to provide CRLs,
 while simultaneously making OCSP optional. Once CRLs are required, Censys will
 stop checking OCSP.
 
+\TODO: verify this statement
+
 * `revocation.crl`
 * `revocation.ocsp`
 * `revoked`
 
 The structure of the `crl` and `ocsp` fields are identical, and indicate if a
-certificate was revoked, and if so, what the reason for the revocation was. The
-top-level `revoked` field that indicates if a certificate is revoked.  It is
-true if either `revocation.crl.revoked` or `revocation.ocsp.revoked` are true.
+certificate was revoked, and if so, what the reason was for the revocation. The
+top-level `revoked` field that indicates if a certificate is revoked. It is true
+if either `revocation.crl.revoked` or `revocation.ocsp.revoked` are true.
 
 \TODO: verify this
 \TODO: example query
+
+## Certificate Transparency and Precerts
+
+The `ct` object contains which [certificate transparency][ct-logs] (CT) logs have
+entries for a certificate. `ct.entries` is a repeated set of key/value pairs
+where the `key` is the log name, and the `value` is the index and timestamp in
+the log.
+
+\TODO example queries
+
+* `precert`
+* `tbs_no_ct_fingerprint_sha256`
+
+A precert is a special type of certificate that can be logged to CT before
+issuing the final "real" certificate. Precertificates are identified by the
+inclusion of a special CT "poison" extension (`parsed.extensions.ct_poison`).
+The top-level `precert` variable is true if `parsed.extensions.ct_poison` is
+true. Both precertificates and certificates can be logged to CT logs, and each
+will have separate entries in the logs. Not all final certificates are logged.
+
+The certificates dataset deduplicates final certificates and their corresponding
+precertificates when both are present, by excluding the precertificates from the
+dataset. If a precertificate is present as a row in the certificates dataset, it
+means that Censys has not seen the corresponding final certificate. This may be
+because the certificate was not issued, or more likely, because the final
+certificate was not logged and Censys has not yet observed it in use on a host.
+
+The `ct.entries` are not unified between the precertificate and the certificate.
+They reflect the actual log entries corresponding to the precertificate or the
+final certificate, not both.
+
+Final certificates may contain the _signed certificate timestamp_ (SCT)
+extension, which indicate that a precertificate was logged to a specific set of
+logs. SCTs are exposed in the `parsed.extensions.signed_certificate_timestamp`
+field. The `log_id` of an SCT is the raw bytes of the ID in the SCT, and
+corresponds with values from the [CT log list][ctlogs], not the human-friendly
+log name used as the `key` in each entry from `ct.entries`.
+
+\TODO: example query using both tables?
+\TODO: example query about embedded SCTs
+\TODO: example query constrasting log entries to embedded SCTs
 
 ## BigQuery Tables
 
