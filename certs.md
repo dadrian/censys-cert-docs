@@ -18,9 +18,10 @@ with no spaces.
 * `parent_spki_fingerprint_sha256`
 
 The SPKI fingerprint is the hash of DER-encoded bytes of the Subject Public Key
-Info (SPKI). The parent SPKI fingerprint is the SPKI fingerprint for all [valid
+Info (SPKI). It is identical to the `parsed.subject_key_info.fingerprint_sha256`
+field. The parent SPKI fingerprint is the SPKI fingerprint for all [valid
 issuers](#validation) of the certificate. It will be equal to the
-`parsed.subject_key_info.fingerprint_sha256` field in the parent.
+`parsed.subject_key_info.fingerprint_sha256` field in the _parent_ certificate. 
 
 \TODO: Example query
 
@@ -146,8 +147,8 @@ The full list of fields in the `parsed` object is available in the
 
 The `validation` structure contains the result of certificate validation and
 path building for multiple different root stores. Each root store has the same
-set of fields. The trust information is exposed as `validation.{root_store}.*`.
-The root stores are:
+set of fields. The trust information is exposed as `validation.$ROOT_STORE.*`
+(e.g. `validation.chrome.*`). The root stores are:
 
 * `nss`: The root store managed by Mozilla and used in Firefox and many Linux distributions.
 * `microsoft`: The root store used on Windows
@@ -163,18 +164,18 @@ constraints, or any platform-specific validation rules, such as certificate
 transparency policies, that may be included in validator implementations
 maintained by operators of various roots stores (e.g. [CCV][ccv]).
 
-* type
+* `validation.$ROOT_STORE.type`
 
 This indicates if a certificate is a leaf, intermediate, or root. Roots are
 defined by their inclusion in a root store. Leaf certificates are certificates
 that do not have `parsed.extensions.basic_constraints.is_ca` set to `true`.
 Intermediates have `is_ca` set, but are not roots.
 
-* is_valid
-* ever_valid
-* has_trusted_path
-* had_trusted_path
-* in_revocation_set
+* `validation.$ROOT_STORE.is_valid`
+* `validation.$ROOT_STORE.ever_valid`
+* `validation.$ROOT_STORE.has_trusted_path`
+* `validation.$ROOT_STORE.had_trusted_path`
+* `validation.$ROOT_STORE.in_revocation_set`
 
 There are three main validity checks implemented by the Censys verifier: path
 building, expiration, and revocation. The `is_valid` field indicates if the
@@ -191,7 +192,7 @@ currently or at the time of its expiration, could build a path to a trusted
 root, regardless of revocation status. In practice, `ever_valid` and
 `had_trusted_path` are always identical.
 
-* `chains`
+* `validation.$ROOT_STORE.chains`
 
 Chains is a list of trusted paths to the root store. The paths are valid at the
 time specified in `validated_at` for unexpired certificates, and at 1 second
@@ -214,6 +215,15 @@ revocation sets for the following root stores and exposes it as the
 * Chrome ([CRLSet][crlset])
 
 \TODO: Verify which revocation sets are checked and link them
+
+* `validation_level`
+
+The top-level `validation_level` field contains the identity validation type
+performed by the certification authority when the certificate was issued: Domain
+Validation (DV), Organization Validation (OV), or Extended Validation (EV). It
+does not indicate anything about the root store trust validation.
+
+* `revocation`
 
 CA-provided revocation information is stored in the top-level `revocation`
 structure. There are two forms of revocation information available:
@@ -279,6 +289,54 @@ log name used as the `key` in each entry from `ct.entries`.
 \TODO: example query about embedded SCTs
 \TODO: example query constrasting log entries to embedded SCTs
 
+## ZLint
+
+Censys lints all certificates with [ZLint][zlint], which checks for consistency
+with standards such as [RFC 5280][rfc-5280] and other relevant PKI requirements
+such as the [Baseline Requirements][brs].
+
+* `zlint.version`
+* `zlint.timestamp`
+* `zlint.notices_present`
+* `zlint.warnings_present`
+* `zlint.errors_present`
+* `zlint.fatals_present`
+* `zlint.failed_lints`
+
+ZLint is composed of a series of "lints", each of which runs against every
+certificate, and emits either _OK_, N/A, a _Notice_, a _Warning_, an _Error_, or
+_Fatal_.  The top-level `zlint` object contains all the metadata on and output
+from ZLint. Censys executes the default set of lints for ZLint, which is static
+across versions. To determine the full set of lints execute, check the ZLint
+documentation for the version indicated in `zlint.version`. Censys records the
+name of each lint that outputs a notice, warning, or error result in the
+`zlint.failed_lints` field. Censys does not record lints that output N/A or OK.
+
+\TODO: verify if this is all certificates, or just trusted certificates
+
+## Metadata
+
+* `labels`
+
+This contains the same set of tags as the online interface.
+
+\TODO: enumerate the tags
+
+* `added_at`
+* `modified_at`
+* `inserted_at`
+
+\TODO: what is the difference between added_at and inserted_at?
+
+* `validated_at`
+* `not_valid_after`
+
+\TODO: repeate information from earlier, verify `validated_at` semantics
+
+* `parse_status`
+
+\TODO: mention this in the parsed section, repeat information here
+
 ## BigQuery Tables
 
 BigQuery is case-insensitive
@@ -296,3 +354,4 @@ BigQuery is case-insensitive
 [ccv]: https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md#what-is-the-chrome-certificate-verifier
 [onecrl]: https://wiki.mozilla.org/CA/Revocation_Checking_in_Firefox
 [crlset]: https://www.chromium.org/Home/chromium-security/crlsets/
+[zlint]: https://github.com/zmap/zlint
