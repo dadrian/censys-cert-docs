@@ -8,11 +8,18 @@
 * `fingerprint_sha1`
 * `fingerprint_md5`
 
-\TODO: BigQuery these are bytes. What are they in ES? Redo this section.
-
 Each certificate fingerprint is the hash of the DER-encoded bytes of the
 certificate with the specified algorithm, represented as a lowercase hex string
-with no spaces.
+with no spaces. In BigQuery, hashes are stored as raw bytes, and are not hex-encoded.
+
+```censys
+55623fdda1e95b7f682780187ac106619bea9ab8dad69a9aaea42e0685132df5
+```
+```bigquery
+SELECT COUNT(*) FROM `censys-io.certificates_v2.certificates` 
+WHERE fingerprint_sha256 = FROM_HEX("55623fdda1e95b7f682780187ac106619bea9ab8dad69a9aaea42e0685132df5")
+-- Returns 1
+```
 
 * `spki_fingerprint_sha256`
 * `parent_spki_fingerprint_sha256`
@@ -23,10 +30,22 @@ field. The parent SPKI fingerprint is the SPKI fingerprint for all [valid
 issuers](#validation) of the certificate. It will be equal to the
 `parsed.subject_key_info.fingerprint_sha256` field in the _parent_ certificate. 
 
-\TODO: Example query
+For example, to find verisons of the Let's Encrypt Root X1 RSA key, and any intermediate it signed:
+```censys
+parsed.subject_key_info.fingerprint_sha256: 0b9fa5a59eed715c26c1020c711b4f6ec42d58b0015e14337a39dad301c5afc3 OR
+parent_spki_fingerpint_sha256: 0b9fa5a59eed715c26c1020c711b4f6ec42d58b0015e14337a39dad301c5afc3
+```
+```bigquery
+SELECT fingerprint_sha256 FROM `censys-io.certificates_v2.certificates` 
+WHERE
+  parsed.subject_key_info.fingerprint_sha256 = FROM_HEX("0b9fa5a59eed715c26c1020c711b4f6ec42d58b0015e14337a39dad301c5afc3")
+  OR
+  parent_spki_fingerpint_sha256 = FROM_HEX("0b9fa5a59eed715c26c1020c711b4f6ec42d58b0015e14337a39dad301c5afc3")
+```
 
 * `tbs_fingerprint_sha256`
 * `tbs_no_ct_fingerprint_sha256`
+* `precert`
 
 The TBS fingerprint is the fingerprint of the to-be-signed portion of the
 DER-encoded bytes of the certificate, which is effectively all of the
@@ -38,8 +57,37 @@ of the DER-encoded bytes of the TBS certificate with the SCT poison extension
 removed. This field will match between a certificate and any of its associated
 precertificates.
 
-\TODO: How are precertificates collapsed
-\TODO: Example query
+All known precertificates are available in BigQuery in the `certificates_all`
+table. The `certificates` tables removes precertificates when there is a
+corresponding final certificate known to Censys. If no final certificate is
+known to Censys (e.g, because it is not logged and not served publicly), the
+corresponding precertificate is included in the `certificates` table. The
+`precert` field is a boolean and indicates when an entry is a precertificate.
+
+\TODO: How are precertificates collapsed in the web interface
+
+```bigquery
+-- Breakdown of certificate vs precertificate in the deduplicated dataset for
+-- unexpired certificates currently trusted by Chrome
+SELECT COUNT(*), precert
+FROM `censys-io.certificates_v2.certificates`
+WHERE
+  validation.chrome.is_trusted = TRUE
+  AND not_valid_after > CURRENT_TIMESTAMP()
+```
+
+```bigquery
+-- Among all trusted precerts, how many transparency logs do they appear in?
+SELECT
+    COUNT(*), ARRAY_LEN(ct.entries) AS num_logs
+FROM `censys-io.certificates_v2.certificates_all` 
+WHERE
+    precert = TRUE
+    AND validation.chrome.is_trusted = TRUE
+    -- Optimization to partition query
+    AND not_valid_after > CURRENT_TIMESTAMP()
+GROUP BY 2
+```
 
 ### Names
 
@@ -54,11 +102,27 @@ In trusted Web PKI certificates, this field will most commonly be identical to
 the DNS names in the Subject Alternative Name on leaf certificates, and empty on
 root and intermediate certificates.
 
+```censys
+censys.io AND validation.chrome.is_valid = TRUE
+```
+```bigquery
+-- All unexpired certificates for any subdomain of censys.io
+SELECT names, fingerprint_sha256, not_valid_after
+FROM `censys-io.certificates_v2.certificates` 
+WHERE EXISTS(SELECT * FROM UNNEST(names) AS n WHERE NET.REG_DOMAIN(n) = "censys.io")
+    AND validation.chrome.is_valid = TRUE
+    -- Optimization to partition query
+    AND not_valid_after > CURRENT_TIMESTAMP() 
+ORDER BY not_valid_after ASC
+```
+
 ### Parsed
 
 The `parsed` structure is a representation of the ASN.1 schema of an X.509
 certificate in structured form. Each field corresponds to a field defined in
-[RFC 5280][rfc-5280] or the [baseline requirements][brs] (BRs). 
+[RFC 5280][rfc-5280] or the [baseline requirements][brs] (BRs). The full list of
+fields in the `parsed` object is available in the
+[reference][censys-cert-reference].
 
 * `parsed.issuer`
 * `parsed.subject`
@@ -106,8 +170,7 @@ certificates, querying against `not_valid_after` instead of
 
 \TODO: example query
 
-* subject_key_info
-* signature
+* `parsed.subject_key_info`
 
 The `subject_key_info` corresponds with the Subject Public Key Information
 (SPKI) structure defined in [RFC 5280][rfc-5280]. This structure includes the
@@ -121,11 +184,12 @@ commonly used to identify certificate parents via the top-level field
 
 \TODO: example query
 
-The `signature` is the raw bytes of the DER-encoding of the signature, which
-will be encoded as per the algorithm defined in the `subject_key_info`.
+* `parsed.signature`
 
+The `signature` contains the signature algorithm in use, the DER-encoded value
+of the signature, and boolean to indicate if it's self-signed.  
 
-\TODO: verify this
+\BUG: See feedback
 
 * `extensions`
 * `unknown_extensions`
@@ -134,14 +198,23 @@ will be encoded as per the algorithm defined in the `subject_key_info`.
 
 * `redacted`
 
-This field is true if the names in the certificate are redacted per RFC \TK.
+This field is true if the names in the certificate are using Domain Label
+Redaction. This was never standardized, and ultimately drpped from RFC 9192.
 
 * `version`
 * `serial_number`
 
-The `version` is the integer X.509 version encoded in the certificate. 
-The full list of fields in the `parsed` object is available in the
-[reference][censys-cert-reference].
+The `version` is the integer X.509 version encoded in the certificate. The
+`serial_number` is an unsigned decimal string. 
+
+```censys
+parsed.serial_number: 12345
+```
+```bigquery
+SELECT fingerprint_sha256
+FROM `censys-io.certificates_v2.certificates`
+WHERE parsed.serial_number = CAST(12345 AS STRING)
+```
 
 ### Validation and Revocation
 
@@ -234,7 +307,7 @@ CA/Browser Forum (CABF) is in the process of requiring all CAs to provide CRLs,
 while simultaneously making OCSP optional. Once CRLs are required, Censys will
 stop checking OCSP.
 
-\TODO: verify this statement
+\TODO: see feedback
 
 * `revocation.crl`
 * `revocation.ocsp`
@@ -245,7 +318,6 @@ certificate was revoked, and if so, what the reason was for the revocation. The
 top-level `revoked` field that indicates if a certificate is revoked. It is true
 if either `revocation.crl.revoked` or `revocation.ocsp.revoked` are true.
 
-\TODO: verify this
 \TODO: example query
 
 ## Certificate Transparency and Precerts
@@ -320,7 +392,7 @@ name of each lint that outputs a notice, warning, or error result in the
 
 This contains the same set of tags as the online interface.
 
-\TODO: enumerate the tags
+\TODO: enumerate common tags
 
 * `added_at`
 * `modified_at`

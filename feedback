@@ -1,24 +1,61 @@
-Decide if bools are prefixed with `is` or not
+FEEDBACK: Decide if bools are prefixed with `is` or not
 - `validation.*.is_valid` but `precert` and `parsed.redacted` are not
 
-`redacted`
+FEEDBACK: `serial_number` is this a decimal string or a hex string?
 
-`serial_number` should this be a string?
-
-Add a list of all extension IDs as a string. Four options:
+FEEDBACK: Add a list of all extension IDs as a string. Four options:
 1. `parsed.extensions_ids` (adjacent to existing fields)
 2. `parsed.extensions.{ids, known, unknown}` (move existing fields)
 3. `parsed.extensions.ids` (probably confusing because of the existence of `unknown_extensions`)
-4. Get rid of unknown extensions, and have `parsed.extensions.ids`. If someone really needs to parse an unknown extension, they can look at the ASN.1 in raw in BQ. I doubt anyone uses the web interface for this.
+4. Get rid of unknown extensions, and have `parsed.extensions.ids`. If someone really needs to parse an unknown extension, they can look at the ASN.1 in raw in BQ. This makes unknown extension content harder to find in the web interface, but IDs will be easier to find.
 
-`validation.{}.ever_valid` is identical to `validation.{}.had_trusted_path`
-- can't convince myself of a difference in the description
-- empirically verified it's true for NSS and Chrome
+I recommend (4)
+
+FEEDBACK: `validation.{}.ever_valid` is identical to `validation.{}.had_trusted_path`
+- Can't convince myself of a difference in the description
+- Empirically verified it's true for NSS and Chrome
 - I recommend dropping `had_trusted_path`
 
-Fingerprints are bytes in BigQuery, is this the case in ES?
-- Confusing that they don't match, but also I understand why
-- TODO: show how to go from hex to bytes in bigquery
+FEEDBACK: It's unclear if revocation is checked during path building, or only after the fact.
 
-Precert deduplication:
-- 
+FEEDBACK: `validated_at` is confusing. Is it the time the data pipeline was ran,
+or is it the time used as "now" for certificate validation?
+
+FEEDBACK: All CAs are required to have CRLs in various forms now, due to Mozilla
+requirements and upcoming CABF requirements. You should drop OCSP and only check
+CRLs (they're disclosed in CCADB).
+
+FEEDBACK: Precert deduplication:
+- You did this right, but it's difficult to explain in docs
+- TODO(dadrian): Explain this at the bottom section of the docs, but better
+
+BUG: Fingerprint SHA256
+- Seem to have resolved the duplicate certificates thing from last year
+- BUG: There are 453059 certs with an empty fingerprint
+```
+SELECT COUNT(*) as num_certs, fingerprint_sha256 FROM `censys-io.certificates_v2.certificates`
+GROUP BY 2
+HAVING num_certs > 1
+```
+```
+[{
+  "num_certs": "453059",
+  "fingerprint_sha256": ""
+}]
+```
+
+BUG: `parsed.signature.valid`:
+- This is wrong, and better exposed in `validation`, since you need the parent to be able to verify the signature, and you don't have that at parse time.
+- This has always been wrong for the lifetime of Censys, but you can fix it now!
+- I would delete `.valid` and lift `.value` to `parsed.signature`
+```
+SELECT COUNT(*), parsed.signature.valid, validation.chrome.ever_valid
+FROM `censys-io.certificates_v2.certificates` 
+WHERE not_valid_after > CURRENT_TIMESTAMP()
+GROUP BY 2,3
+-- This should never return a non-zero number for `false,true`, but it does.
+```
+
+FEEDBACK: Is there a list of common tags somewhere? Are you going to commit to them?
+
+BUG: The descriptions do not yet appear in BigQuery for customers.
